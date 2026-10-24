@@ -4,7 +4,7 @@ import { createServer } from 'node:net'
 import { MongoClient } from 'mongodb'
 import * as Y from '@y/y'
 import { WebsocketProvider } from '@y/websocket'
-import { applyInputChange, readText } from '../demo/src/editor-helpers.js'
+import { applyInputChange, readText } from '../demo/src/editor-helpers.ts'
 
 const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
 
@@ -29,7 +29,7 @@ const findAvailablePort = async () => {
 }
 
 const startServer = async (port, mongoUrl) => {
-  const child = spawn(globalThis.process.execPath, ['./server/index.js'], {
+  const child = spawn(globalThis.process.execPath, ['--import', 'tsx', './server/index.ts'], {
     cwd: process.cwd(),
     env: { ...globalThis.process.env, HOST: '0.0.0.0', PORT: String(port), MONGO_URL: mongoUrl },
     stdio: ['ignore', 'pipe', 'pipe']

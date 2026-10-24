@@ -1,11 +1,13 @@
 import * as delta from 'lib0/delta'
+import type * as Y from '@y/y'
 
-export const readText = sharedText => sharedText.toDelta().toJSON().children
-  ?.filter(operation => operation.type === 'insert' && typeof operation.insert === 'string')
-  .map(operation => operation.insert)
+type SharedText = ReturnType<Y.Doc['get']>
+
+export const readText = (sharedText: SharedText): string => sharedText.toDelta().toJSON().children
+  ?.flatMap(operation => 'insert' in operation && typeof operation.insert === 'string' ? [operation.insert] : [])
   .join('') || ''
 
-export const applyInputChange = (sharedText, nextText) => {
+export const applyInputChange = (sharedText: SharedText, nextText: string): void => {
   const previousText = readText(sharedText)
   if (previousText === nextText) return
 

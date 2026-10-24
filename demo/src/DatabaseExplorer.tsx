@@ -1,20 +1,26 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type JSX, type SyntheticEvent } from 'react'
+import type { BinaryPayload, RoomDetails, RoomSummary, RoomUpdate } from '../../shared/api-types.js'
 
-const BinaryPayload = ({ roomName, update }) => {
-  const [payload, setPayload] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+interface BinaryPayloadViewProps {
+  roomName: string
+  update: RoomUpdate
+}
 
-  const loadPayload = async event => {
+const BinaryPayloadView = ({ roomName, update }: BinaryPayloadViewProps): JSX.Element => {
+  const [payload, setPayload] = useState<BinaryPayload | null>(null)
+  const [loading, setLoading] = useState<boolean>(false)
+  const [error, setError] = useState<string>('')
+
+  const loadPayload = async (event: SyntheticEvent<HTMLDetailsElement>): Promise<void> => {
     if (!event.currentTarget.open || payload || loading) return
     setLoading(true)
     setError('')
     try {
       const response = await fetch(`/api/rooms/${encodeURIComponent(roomName)}/updates/${update.sequence}`)
       if (!response.ok) throw new Error(`Could not load binary payload (${response.status})`)
-      setPayload(await response.json())
-    } catch (loadError) {
-      setError(loadError.message)
+      setPayload(await response.json() as BinaryPayload)
+    } catch (loadError: unknown) {
+      setError(loadError instanceof Error ? loadError.message : String(loadError))
     } finally {
       setLoading(false)
     }
@@ -36,21 +42,21 @@ const BinaryPayload = ({ roomName, update }) => {
   )
 }
 
-const formatBytes = value => {
+const formatBytes = (value: number): string => {
   if (value < 1024) return `${value} B`
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
   return `${(value / (1024 * 1024)).toFixed(1)} MB`
 }
 
-const formatDate = value => value ? `Saved ${new Date(value).toLocaleString()}` : 'Older update · date unavailable'
+const formatDate = (value: string | null): string => value ? `Saved ${new Date(value).toLocaleString()}` : 'Older update · date unavailable'
 
-const DatabaseExplorer = () => {
-  const [rooms, setRooms] = useState([])
-  const [selectedRoom, setSelectedRoom] = useState('')
-  const [documentDetails, setDocumentDetails] = useState(null)
-  const [loadingRooms, setLoadingRooms] = useState(true)
-  const [loadingDocument, setLoadingDocument] = useState(false)
-  const [error, setError] = useState('')
+const DatabaseExplorer = (): JSX.Element => {
+  const [rooms, setRooms] = useState<RoomSummary[]>([])
+  const [selectedRoom, setSelectedRoom] = useState<string>('')
+  const [documentDetails, setDocumentDetails] = useState<RoomDetails | null>(null)
+  const [loadingRooms, setLoadingRooms] = useState<boolean>(true)
+  const [loadingDocument, setLoadingDocument] = useState<boolean>(false)
+  const [error, setError] = useState<string>('')
 
   useEffect(() => {
     document.title = 'Yjs database explorer'
@@ -62,11 +68,11 @@ const DatabaseExplorer = () => {
       try {
         const response = await fetch('/api/rooms', { signal: controller.signal })
         if (!response.ok) throw new Error(`Could not load rooms (${response.status})`)
-        const data = await response.json()
+        const data = await response.json() as RoomSummary[]
         setRooms(data)
         setSelectedRoom(currentRoom => currentRoom || data[0]?.name || '')
-      } catch (loadError) {
-        if (loadError.name !== 'AbortError') setError(loadError.message)
+      } catch (loadError: unknown) {
+        if (loadError instanceof Error && loadError.name !== 'AbortError') setError(loadError.message)
       } finally {
         if (!controller.signal.aborted) setLoadingRooms(false)
       }
@@ -88,9 +94,9 @@ const DatabaseExplorer = () => {
       try {
         const response = await fetch(`/api/rooms/${encodeURIComponent(selectedRoom)}`, { signal: controller.signal })
         if (!response.ok) throw new Error(`Could not load room data (${response.status})`)
-        setDocumentDetails(await response.json())
-      } catch (loadError) {
-        if (loadError.name !== 'AbortError') setError(loadError.message)
+        setDocumentDetails(await response.json() as RoomDetails)
+      } catch (loadError: unknown) {
+        if (loadError instanceof Error && loadError.name !== 'AbortError') setError(loadError.message)
       } finally {
         if (!controller.signal.aborted) setLoadingDocument(false)
       }
@@ -219,7 +225,7 @@ const DatabaseExplorer = () => {
                                   <span>Binary subtype: {update.subtype}</span>
                                   <span>Sequence: {update.sequence}</span>
                                 </div>
-                                <BinaryPayload roomName={selectedRoom} update={update} />
+                                <BinaryPayloadView roomName={selectedRoom} update={update} />
                               </details>
                             </div>
                           </article>

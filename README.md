@@ -4,6 +4,8 @@ This workspace contains the Yjs 14 core checkout at [`yjs/`](./yjs/), the
 upstream WebSocket provider sources under [`providers/`](./providers/), a React
 browser text editor, and an Express + WebSocket server backed by MongoDB. The
 editor shares document title and plain text between clients in the same room.
+The playground editor and server use TypeScript; the cloned Yjs/provider source
+remains upstream JavaScript.
 
 This is a local learning and development setup, not a production-ready service.
 The server has no authentication or room authorization.
@@ -100,6 +102,13 @@ Install workspace dependencies once:
 npm ci
 ```
 
+The editor and MongoDB/WebSocket server are written in TypeScript. Check their
+types with:
+
+```powershell
+npm run typecheck
+```
+
 In one PowerShell window, start MongoDB (Docker may be used for just this
 service):
 
@@ -126,7 +135,7 @@ Open <http://localhost:5173>.
 
 ## How a keystroke flows
 
-The editor code is in [`demo/src/main.jsx`](./demo/src/main.jsx):
+The editor code is in [`demo/src/main.tsx`](./demo/src/main.tsx):
 
 1. Each browser creates a Yjs `Doc` and gets the same named roots:
    `document-title` and `document-content`.
@@ -156,6 +165,7 @@ text. That behavior remains in the Yjs core.
 | Run the E2E test against local MongoDB | `npm run test:e2e` |
 | Run Yjs core tests | `npm run test:core` |
 | Run Yjs core lint/type checks | `npm run lint:core` |
+| Check editor and server types | `npm run typecheck` |
 | Build browser editor | `npm run demo:build` |
 | Follow logs | `docker compose logs -f mongodb websocket demo dbgate` |
 | Delete all Compose volumes and their data | `docker compose down --volumes` |

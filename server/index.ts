@@ -1,30 +1,60 @@
-import { Binary, MongoClient } from 'mongodb'
+import { Binary, MongoClient, type Document } from 'mongodb'
 import express from 'express'
 import { createServer } from 'node:http'
 import { WebSocketServer } from 'ws'
 import * as Y from '@y/y'
 import { setPersistence, setupWSConnection } from '../providers/y-websocket-server/src/utils.js'
+import type { BinaryPayload, RoomDetails, RoomSummary, RoomUpdate } from '../shared/api-types.js'
+
+interface StoredUpdate extends Document {
+  room: string
+  sequence: number
+  createdAt?: Date
+  update: Binary | Buffer
+}
+
+interface RoomState extends Document {
+  _id: string
+  sequence: number
+}
+
+interface AggregatedRoomSummary {
+  _id: string
+  updateCount: number
+  updateBytes: number
+  latestSequence: number
+  lastUpdated?: Date
+}
+
+interface TextChange {
+  summary: string
+  details: string
+}
+
+interface PersistenceAdapter {
+  bindState: (roomName: string, doc: Y.Doc & { whenInitialized?: Promise<void> }) => void
+  writeState: (roomName: string) => Promise<void>
+}
 
 const mongoUrl = process.env.MONGO_URL || 'mongodb://127.0.0.1:27017/yjs'
 const client = new MongoClient(mongoUrl, { serverSelectionTimeoutMS: 10000 })
 await client.connect()
 const database = client.db()
-const updates = database.collection('updates')
-const roomStates = database.collection('room_states')
+const updates = database.collection<StoredUpdate>('updates')
+const roomStates = database.collection<RoomState>('room_states')
 await updates.createIndex({ room: 1, sequence: 1 }, { unique: true })
 
-const toUpdateBuffer = update => {
+const toUpdateBuffer = (update: StoredUpdate['update']): Buffer => {
   if (Buffer.isBuffer(update)) return update
-  if (update instanceof Binary) return Buffer.from(update.value(true))
+  if (update instanceof Binary) return Buffer.from(update.value())
   throw new Error('Invalid MongoDB update record: update is not BSON binary data')
 }
 
-const readSharedText = sharedText => sharedText.toDelta().toJSON().children
-  ?.filter(operation => operation.type === 'insert' && typeof operation.insert === 'string')
-  .map(operation => operation.insert)
+const readSharedText = (sharedText: ReturnType<Y.Doc['get']>): string => sharedText.toDelta().toJSON().children
+  ?.flatMap(operation => 'insert' in operation && typeof operation.insert === 'string' ? [operation.insert] : [])
   .join('') || ''
 
-const describeTextChange = (before, after) => {
+const describeTextChange = (before: string, after: string): TextChange | null => {
   if (before === after) return null
   let prefix = 0
   while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) {
@@ -40,7 +70,7 @@ const describeTextChange = (before, after) => {
   }
   const removed = before.slice(prefix, before.length - suffix)
   const inserted = after.slice(prefix, after.length - suffix)
-  const excerpt = text => {
+  const excerpt = (text: string): string => {
     const readable = text.replace(/\s+/g, ' ').trim()
     return readable.length > 100 ? `${readable.slice(0, 97)}…` : readable
   }
@@ -53,16 +83,17 @@ const describeTextChange = (before, after) => {
   return { summary: 'Text removed', details: `Removed “${excerpt(removed)}”.` }
 }
 
-const pendingWrites = new Map()
+const pendingWrites = new Map<string, Promise<void>>()
 
-const persistUpdate = (roomName, update) => {
+const persistUpdate = (roomName: string, update: Uint8Array): Promise<void> => {
   const previousWrite = pendingWrites.get(roomName) || Promise.resolve()
-  const nextWrite = previousWrite.then(async () => {
+  const nextWrite: Promise<void> = previousWrite.then(async () => {
     const state = await roomStates.findOneAndUpdate(
       { _id: roomName },
       { $inc: { sequence: 1 } },
       { upsert: true, returnDocument: 'after' }
     )
+    if (!state) throw new Error(`Failed to allocate update sequence for room "${roomName}"`)
     await updates.insertOne({
       room: roomName,
       sequence: state.sequence,
@@ -71,17 +102,19 @@ const persistUpdate = (roomName, update) => {
     })
   })
   pendingWrites.set(roomName, nextWrite)
-  nextWrite.catch(error => {
+  nextWrite.catch((error: unknown) => {
     console.error(`Failed to persist update for room "${roomName}"`, error)
     process.exitCode = 1
   })
   return nextWrite
 }
 
-const flushRoom = roomName => pendingWrites.get(roomName) || Promise.resolve()
+const flushRoom = (roomName: string): Promise<void> => pendingWrites.get(roomName) || Promise.resolve()
 
-setPersistence({
-  bindState: (roomName, doc) => {
+// The upstream WebSocket server is JavaScript-only, so declare its adapter contract here.
+const configurePersistence = setPersistence as unknown as (adapter: PersistenceAdapter) => void
+configurePersistence({
+  bindState: (roomName: string, doc: Y.Doc & { whenInitialized?: Promise<void> }) => {
     doc.whenInitialized = (async () => {
       const cursor = updates.find({ room: roomName }).sort({ sequence: 1 })
       for await (const record of cursor) {
@@ -91,7 +124,11 @@ setPersistence({
         }
         Y.applyUpdate(doc, update, 'mongodb-persistence')
       }
-      doc.on('update', update => {
+      // This Yjs RC emits "update" at runtime, though its event typings omit the event.
+      const updateObservableDoc = doc as unknown as {
+        on: (event: 'update', listener: (update: Uint8Array) => void) => void
+      }
+      updateObservableDoc.on('update', (update: Uint8Array) => {
         persistUpdate(roomName, update)
       })
     })()
@@ -104,7 +141,7 @@ app.get('/', (_request, response) => response.type('text/plain').send('okay'))
 app.get('/health', (_request, response) => response.json({ status: 'ok' }))
 app.get('/api/rooms', async (_request, response) => {
   const [roomSummaries, states] = await Promise.all([
-    updates.aggregate([
+    updates.aggregate<AggregatedRoomSummary>([
       {
         $group: {
           _id: '$room',
@@ -118,12 +155,12 @@ app.get('/api/rooms', async (_request, response) => {
     ]).toArray(),
     roomStates.find({}, { projection: { _id: 1, sequence: 1 } }).toArray()
   ])
-  const rooms = new Map(roomSummaries.map(room => [room._id, {
+  const rooms = new Map<string, RoomSummary>(roomSummaries.map(room => [room._id, {
     name: room._id,
     updateCount: room.updateCount,
     updateBytes: room.updateBytes,
     latestSequence: room.latestSequence,
-    lastUpdated: room.lastUpdated || null
+    lastUpdated: room.lastUpdated?.toISOString() || null
   }]))
   for (const state of states) {
     const room = rooms.get(state._id)
@@ -151,7 +188,12 @@ app.get('/api/rooms/:roomName', async (request, response) => {
   try {
     let previousTitle = ''
     let previousContent = ''
-    const updateDetails = []
+    const updateDetails: Array<{
+      record: StoredUpdate
+      update: Buffer
+      summary: string
+      details: string[]
+    }> = []
     for (const record of records) {
       const update = toUpdateBuffer(record.update)
       if (update.length === 0) {
@@ -160,7 +202,7 @@ app.get('/api/rooms/:roomName', async (request, response) => {
       Y.applyUpdate(doc, update, 'database-explorer')
       const currentTitle = readSharedText(doc.get('document-title'))
       const currentContent = readSharedText(doc.get('document-content'))
-      const changes = []
+      const changes: TextChange[] = []
       if (currentTitle !== previousTitle) {
         changes.push({
           summary: previousTitle ? 'Document name changed' : 'Document name set',
@@ -178,25 +220,25 @@ app.get('/api/rooms/:roomName', async (request, response) => {
       previousTitle = currentTitle
       previousContent = currentContent
     }
-    response.json({
+    const roomUpdates: RoomUpdate[] = updateDetails.map(({ record, update, summary, details }) => ({
+      sequence: record.sequence,
+      summary,
+      details,
+      bytes: update.length,
+      bsonType: record.update instanceof Binary ? 'Binary' : 'Buffer',
+      subtype: record.update instanceof Binary ? record.update.sub_type : 0,
+      createdAt: record.createdAt?.toISOString() || null,
+      hex: update.subarray(0, 64).toString('hex'),
+      base64: update.subarray(0, 64).toString('base64'),
+      truncated: update.length > 64
+    }))
+    const roomDetails: RoomDetails = {
       room: roomName,
       title: readSharedText(doc.get('document-title')),
       content: readSharedText(doc.get('document-content')),
-      updates: updateDetails.map(({ record, update, summary, details }) => {
-        return {
-          sequence: record.sequence,
-          summary,
-          details,
-          bytes: update.length,
-          bsonType: record.update?._bsontype || (Buffer.isBuffer(record.update) ? 'Buffer' : 'Unknown'),
-          subtype: record.update instanceof Binary ? record.update.sub_type : 0,
-          createdAt: record.createdAt || null,
-          hex: update.subarray(0, 64).toString('hex'),
-          base64: update.subarray(0, 64).toString('base64'),
-          truncated: update.length > 64
-        }
-      })
-    })
+      updates: roomUpdates
+    }
+    response.json(roomDetails)
   } finally {
     doc.destroy()
   }
@@ -210,13 +252,14 @@ app.get('/api/rooms/:roomName/updates/:sequence', async (request, response) => {
   const record = await updates.findOne({ room: roomName, sequence })
   if (!record) return response.status(404).json({ error: 'Update not found' })
   const update = toUpdateBuffer(record.update)
-  response.json({
+  const payload: BinaryPayload = {
     room: roomName,
     sequence,
     bytes: update.length,
     hex: update.toString('hex'),
     base64: update.toString('base64')
-  })
+  }
+  response.json(payload)
 })
 
 const server = createServer(app)

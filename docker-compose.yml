@@ -44,7 +44,7 @@ services:
         condition: service_healthy
     volumes:
       - .:/workspace
-      - node_modules_v3:/workspace/node_modules
+      - node_modules_v4:/workspace/node_modules
     healthcheck:
       test:
         - CMD
@@ -71,10 +71,10 @@ services:
       - "127.0.0.1:5173:5173"
     volumes:
       - .:/workspace
-      - node_modules_v3:/workspace/node_modules
+      - node_modules_v4:/workspace/node_modules
     restart: unless-stopped
 
 volumes:
-  node_modules_v3:
+  node_modules_v4:
   dbgate_data:
   mongo_data:

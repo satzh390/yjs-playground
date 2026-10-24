@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "allowJs": true,
+    "types": ["node", "vite/client"]
+  },
+  "include": [
+    "server/**/*.ts",
+    "demo/src/**/*.ts",
+    "demo/src/**/*.tsx",
+    "shared/**/*.ts"
+  ],
+  "exclude": ["node_modules", "yjs", "providers"]
+}

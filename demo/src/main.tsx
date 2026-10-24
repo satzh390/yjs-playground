@@ -1,25 +1,42 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type JSX } from 'react'
 import { createRoot } from 'react-dom/client'
 import * as Y from '@y/y'
 import { WebsocketProvider } from '@y/websocket'
-import DatabaseExplorer from './DatabaseExplorer.jsx'
-import { applyInputChange, readText } from './editor-helpers.js'
+import DatabaseExplorer from './DatabaseExplorer.tsx'
+import { applyInputChange, readText } from './editor-helpers.ts'
 import './style.css'
 
-const colors = ['#5967d9', '#de765e', '#34947a', '#b768a4', '#bd8c32', '#4b83b8']
-const normalizeRoomName = roomName => roomName.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 80) || 'quickstart'
+interface Collaborator {
+  name: string
+  color: string
+}
 
-const Editor = () => {
+type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'
+
+interface ConnectionState {
+  status: ConnectionStatus
+  detail: string
+}
+
+const colors: string[] = ['#5967d9', '#de765e', '#34947a', '#b768a4', '#bd8c32', '#4b83b8']
+const normalizeRoomName = (roomName: string): string => roomName.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 80) || 'quickstart'
+const isCollaborator = (user: unknown): user is Collaborator => {
+  if (typeof user !== 'object' || user === null) return false
+  const candidate = user as Partial<Collaborator>
+  return typeof candidate.name === 'string' && typeof candidate.color === 'string'
+}
+
+const Editor = (): JSX.Element => {
   const requestedRoom = new URLSearchParams(location.search).get('room') || 'quickstart'
   const roomName = normalizeRoomName(requestedRoom)
-  const docRef = useRef(null)
-  const [title, setTitle] = useState('')
-  const [content, setContent] = useState('')
-  const [roomInput, setRoomInput] = useState(roomName)
-  const [connection, setConnection] = useState({ status: 'connecting', detail: 'Connecting to shared document…' })
-  const [collaborators, setCollaborators] = useState([])
-  const [shareLabel, setShareLabel] = useState('Share')
-  const [shareError, setShareError] = useState('')
+  const docRef = useRef<Y.Doc | null>(null)
+  const [title, setTitle] = useState<string>('')
+  const [content, setContent] = useState<string>('')
+  const [roomInput, setRoomInput] = useState<string>(roomName)
+  const [connection, setConnection] = useState<ConnectionState>({ status: 'connecting', detail: 'Connecting to shared document…' })
+  const [collaborators, setCollaborators] = useState<Collaborator[]>([])
+  const [shareLabel, setShareLabel] = useState<string>('Share')
+  const [shareError, setShareError] = useState<string>('')
 
   useEffect(() => {
     const doc = new Y.Doc()
@@ -32,10 +49,9 @@ const Editor = () => {
     })
     const updateTitle = () => setTitle(readText(sharedTitle))
     const updateContent = () => setContent(readText(sharedContent))
-    const updateCollaborators = () => {
+    const updateCollaborators = (): void => {
       const users = [...provider.awareness.getStates().values()]
-        .map(state => state.user)
-        .filter(user => user && typeof user.name === 'string')
+        .flatMap((state: { user?: unknown }) => isCollaborator(state.user) ? [state.user] : [])
       setCollaborators(users)
     }
     const localName = sessionStorage.getItem('yjs-editor-name') || `Editor ${Math.floor(Math.random() * 900 + 100)}`
@@ -48,18 +64,18 @@ const Editor = () => {
     sharedTitle.observe(updateTitle)
     sharedContent.observe(updateContent)
     provider.awareness.on('change', updateCollaborators)
-    provider.on('status', ({ status }) => {
+    provider.on('status', ({ status }: { status: ConnectionStatus }) => {
       setConnection({
         status,
         detail: status === 'connected' ? 'Connected to the shared document' : 'Reconnecting to the shared document…'
       })
     })
-    provider.on('sync', isSynced => {
+    provider.on('sync', (isSynced: boolean) => {
       if (isSynced) {
         setConnection({ status: 'connected', detail: 'Connected · stored in MongoDB' })
       }
     })
-    provider.on('connection-error', event => {
+    provider.on('connection-error', (event: { message?: string; type?: string }) => {
       setConnection({
         status: 'disconnected',
         detail: `WebSocket connection failed: ${event.message || event.type}`
@@ -86,7 +102,7 @@ const Editor = () => {
 
   const wordCount = content.trim().split(/\s+/).filter(Boolean).length
 
-  const joinRoom = event => {
+  const joinRoom = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
     const nextRoomName = normalizeRoomName(roomInput.trim())
     const parameters = new URLSearchParams(location.search)
@@ -94,14 +110,14 @@ const Editor = () => {
     location.search = parameters.toString()
   }
 
-  const shareDocument = async () => {
+  const shareDocument = async (): Promise<void> => {
     try {
       await navigator.clipboard.writeText(location.href)
       setShareLabel('Link copied')
       setShareError('')
       setTimeout(() => setShareLabel('Share'), 1600)
-    } catch (error) {
-      setShareError(`Could not copy the link: ${error.message}`)
+    } catch (error: unknown) {
+      setShareError(`Could not copy the link: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -119,7 +135,7 @@ const Editor = () => {
             maxLength={120}
             placeholder="Untitled document"
             value={title}
-            onChange={event => {
+            onChange={(event: ChangeEvent<HTMLInputElement>) => {
               setTitle(event.target.value)
               if (docRef.current) applyInputChange(docRef.current.get('document-title'), event.target.value)
             }}
@@ -153,7 +169,7 @@ const Editor = () => {
               aria-label="Room name"
               autoComplete="off"
               value={roomInput}
-              onChange={event => setRoomInput(event.target.value)}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => setRoomInput(event.target.value)}
             />
             <button type="submit" className="room-button">Join room</button>
           </form>
@@ -173,7 +189,7 @@ const Editor = () => {
             spellCheck="true"
             placeholder="Start writing…"
             value={content}
-            onChange={event => {
+            onChange={(event: ChangeEvent<HTMLTextAreaElement>) => {
               setContent(event.target.value)
               if (docRef.current) applyInputChange(docRef.current.get('document-content'), event.target.value)
             }}
@@ -190,5 +206,6 @@ const Editor = () => {
 }
 
 const Page = location.pathname === '/database' ? DatabaseExplorer : Editor
-
-createRoot(document.getElementById('root')).render(<Page />)
+const rootElement = document.getElementById('root')
+if (!rootElement) throw new Error('Missing #root element for the application')
+createRoot(rootElement).render(<Page />)
