@@ -1,0 +1,14 @@
+{
+  "name": "@y/local-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite"
+  },
+  "dependencies": {
+    "@y/websocket": "file:../providers/y-websocket",
+    "@y/y": "*",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  }
+}
