@@ -5,7 +5,8 @@ upstream WebSocket provider sources under [`providers/`](./providers/), a React
 browser text editor, and an Express + WebSocket server backed by MongoDB. The
 editor shares document title and plain text between clients in the same room.
 The playground editor and server use TypeScript; the cloned Yjs/provider source
-remains upstream JavaScript.
+remains unmodified upstream JavaScript. MongoDB persistence and the WebSocket
+room handler are implemented by the playground server.
 
 This is a local learning and development setup, not a production-ready service.
 The server has no authentication or room authorization.
@@ -142,15 +143,17 @@ The editor code is in [`demo/src/main.tsx`](./demo/src/main.tsx):
 2. When the user types, the editor finds the changed text range and applies an
    insert/delete delta to the shared content node. Yjs assigns IDs and
    deterministically integrates concurrent edits.
-3. The WebSocket provider sends Yjs updates to the Express-hosted WebSocket
-   server. The server applies the update to its room document and broadcasts
-   it to the other peers.
+3. The upstream WebSocket provider sends Yjs updates to the playground's
+   WebSocket handler in [`server/websocket.ts`](./server/websocket.ts). The
+   handler applies each update to that room's server-side Yjs document and
+   broadcasts it to the other connected clients.
 4. The other browser observes its shared node and updates the editor without
    replacing the whole local document. The provider's awareness channel shares
    who is present in the room.
-5. The server writes each binary Yjs update to MongoDB. On a new room
-   connection, the server loads its updates in sequence before sending initial
-   synchronization, so peers receive the restored document.
+5. The playground server writes each binary Yjs update to MongoDB. When a room
+   is first opened, it replays that room's updates in sequence before syncing
+   the client. The upstream `y-websocket-server` source is cloned for reference
+   and learning, but the playground does not import or patch it.
 
 MongoDB stores opaque CRDT update records; it is not responsible for merging
 text. That behavior remains in the Yjs core.
@@ -187,8 +190,9 @@ text. That behavior remains in the Yjs core.
   `f786ae973510505a129b31d14a166b2809d1f506`.
 - [`providers/y-websocket-server/`](./providers/y-websocket-server/) is cloned
   from <https://github.com/yjs/y-websocket-server> at commit
-  `506ac10e69bcd202433657910cbf8c50b28c6f19`. Its server import uses the local
-  Yjs 14 core, and initial sync waits for MongoDB hydration.
+  `506ac10e69bcd202433657910cbf8c50b28c6f19` without local changes. It is
+  included as upstream reference code; the playground's MongoDB-aware handler
+  lives in [`server/websocket.ts`](./server/websocket.ts).
 - The editor is intentionally plain text, not a Google Docs rich-text editor.
   Formatting, cursor positions, authentication, and authorization are not
   included.

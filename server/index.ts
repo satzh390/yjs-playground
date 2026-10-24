@@ -1,10 +1,9 @@
 import { Binary, MongoClient, type Document } from 'mongodb'
 import express from 'express'
 import { createServer } from 'node:http'
-import { WebSocketServer } from 'ws'
 import * as Y from '@y/y'
-import { setPersistence, setupWSConnection } from '../providers/y-websocket-server/src/utils.js'
 import type { BinaryPayload, RoomDetails, RoomSummary, RoomUpdate } from '../shared/api-types.js'
+import { createYjsWebSocketServer } from './websocket.js'
 
 interface StoredUpdate extends Document {
   room: string
@@ -29,11 +28,6 @@ interface AggregatedRoomSummary {
 interface TextChange {
   summary: string
   details: string
-}
-
-interface PersistenceAdapter {
-  bindState: (roomName: string, doc: Y.Doc & { whenInitialized?: Promise<void> }) => void
-  writeState: (roomName: string) => Promise<void>
 }
 
 const mongoUrl = process.env.MONGO_URL || 'mongodb://127.0.0.1:27017/yjs'
@@ -111,30 +105,16 @@ const persistUpdate = (roomName: string, update: Uint8Array): Promise<void> => {
 
 const flushRoom = (roomName: string): Promise<void> => pendingWrites.get(roomName) || Promise.resolve()
 
-// The upstream WebSocket server is JavaScript-only, so declare its adapter contract here.
-const configurePersistence = setPersistence as unknown as (adapter: PersistenceAdapter) => void
-configurePersistence({
-  bindState: (roomName: string, doc: Y.Doc & { whenInitialized?: Promise<void> }) => {
-    doc.whenInitialized = (async () => {
-      const cursor = updates.find({ room: roomName }).sort({ sequence: 1 })
-      for await (const record of cursor) {
-        const update = toUpdateBuffer(record.update)
-        if (update.length === 0) {
-          throw new Error(`Invalid MongoDB update record for room "${roomName}"`)
-        }
-        Y.applyUpdate(doc, update, 'mongodb-persistence')
-      }
-      // This Yjs RC emits "update" at runtime, though its event typings omit the event.
-      const updateObservableDoc = doc as unknown as {
-        on: (event: 'update', listener: (update: Uint8Array) => void) => void
-      }
-      updateObservableDoc.on('update', (update: Uint8Array) => {
-        persistUpdate(roomName, update)
-      })
-    })()
-  },
-  writeState: flushRoom
-})
+const loadRoom = async (roomName: string, doc: Y.Doc): Promise<void> => {
+  const cursor = updates.find({ room: roomName }).sort({ sequence: 1 })
+  for await (const record of cursor) {
+    const update = toUpdateBuffer(record.update)
+    if (update.length === 0) {
+      throw new Error(`Invalid MongoDB update record for room "${roomName}"`)
+    }
+    Y.applyUpdate(doc, update, 'mongodb-persistence')
+  }
+}
 
 const app = express()
 app.get('/', (_request, response) => response.type('text/plain').send('okay'))
@@ -263,8 +243,7 @@ app.get('/api/rooms/:roomName/updates/:sequence', async (request, response) => {
 })
 
 const server = createServer(app)
-const websocketServer = new WebSocketServer({ noServer: true })
-websocketServer.on('connection', setupWSConnection)
+const websocketServer = createYjsWebSocketServer({ loadRoom, persistUpdate, flushRoom })
 server.on('upgrade', (request, socket, head) => {
   websocketServer.handleUpgrade(request, socket, head, connection => {
     websocketServer.emit('connection', connection, request)

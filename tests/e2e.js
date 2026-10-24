@@ -122,6 +122,14 @@ try {
   secondClient = await connect(url, roomName)
   isolatedClient = await connect(url, `${roomName}-other`)
 
+  const firstClientId = firstClient.doc.clientID
+  firstClient.provider.awareness.setLocalStateField('user', { name: 'First client' })
+  await waitFor(
+    () => secondClient.provider.awareness.getStates().get(firstClientId)?.user?.name === 'First client',
+    'collaborator awareness to sync between clients'
+  )
+  console.log('PASS: collaborator awareness synchronizes between WebSocket clients')
+
   applyInputChange(firstClient.content, 'Hello, shared world!')
   await waitFor(
     () => readText(secondClient.content) === 'Hello, shared world!',
@@ -168,12 +176,16 @@ try {
   const rooms = await roomsResponse.json()
   assert.ok(rooms.some(room => room.name === roomName && room.updateCount === 3))
   console.log('PASS: database explorer reconstructs readable documents and binary update metadata')
+  disconnect(firstClient)
+  firstClient = null
+  await waitFor(
+    () => !secondClient.provider.awareness.getStates().has(firstClientId),
+    'disconnected collaborator awareness to be removed'
+  )
   disconnect(secondClient)
   secondClient = null
   disconnect(isolatedClient)
   isolatedClient = null
-  disconnect(firstClient)
-  firstClient = null
   await wait(100)
   await stopServer(serverProcess)
   serverProcess = null
