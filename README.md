@@ -8,6 +8,31 @@ editor shares document title and plain text between clients in the same room.
 This is a local learning and development setup, not a production-ready service.
 The server has no authentication or room authorization.
 
+## First-time source checkout
+
+The `yjs/`, `providers/y-websocket/`, and
+`providers/y-websocket-server/` entries in this playground point to separate
+open-source repositories. GitHub may show those folder links as 404 when the
+upstream source has not been cloned into your local playground checkout.
+Clone the public projects into those paths before running the playground.
+From the root of a fresh clone of
+<https://github.com/satzh390/yjs-playground>, run these PowerShell commands:
+
+```powershell
+git clone https://github.com/yjs/yjs.git yjs
+git -C yjs checkout 0e0dc3401b9753fbffb60699f6b68460cf1bcdf9
+
+New-Item -ItemType Directory -Force providers | Out-Null
+git clone https://github.com/yjs/y-websocket.git providers/y-websocket
+git -C providers/y-websocket checkout f786ae973510505a129b31d14a166b2809d1f506
+
+git clone https://github.com/yjs/y-websocket-server.git providers/y-websocket-server
+git -C providers/y-websocket-server checkout 506ac10e69bcd202433657910cbf8c50b28c6f19
+```
+
+These commands check out the upstream revisions this playground was tested
+with. After cloning them, continue with the Docker Compose setup below.
+
 ## Start the app
 
 Requirements: Docker Desktop with Compose. From the workspace root run:
